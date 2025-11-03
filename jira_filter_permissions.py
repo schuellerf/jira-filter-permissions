@@ -27,21 +27,53 @@ def get_auth_headers(api_token: str) -> Dict[str, str]:
 
 
 def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
-    """Try to detect Jira API version by testing both endpoints."""
+    """Try to detect Jira API version by testing both endpoints.
+    
+    Data Center instances typically use API v2, while Cloud uses v3.
+    We try v2 first (more common for self-hosted), then v3.
+    We check for valid JSON responses, not just HTTP 200, since some
+    endpoints may return 200 with HTML or error messages.
+    """
     print(f"Detecting API version for {jira_url}...", file=sys.stderr)
-    # Try API v3 first (Cloud)
+    
+    # Try API v2 first (Data Center/Server - more common for self-hosted instances)
     try:
-        url = f"{jira_url}/rest/api/3/serverInfo"
+        url = f"{jira_url}/rest/api/2/myself"
+        print(f"  Trying API v2: {url}", file=sys.stderr)
+        response = requests.get(url, headers=auth_headers, timeout=5)
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                # Verify it's actually JSON with expected fields
+                if isinstance(data, dict) and ("self" in data or "key" in data or "accountId" in data):
+                    print("  ✓ API v2 (Data Center/Server) detected", file=sys.stderr)
+                    return 2
+            except JSONDecodeError:
+                # Not valid JSON, probably HTML error page
+                print(f"  API v2 returned non-JSON response", file=sys.stderr)
+    except requests.RequestException as e:
+        print(f"  API v2 check failed: {e}", file=sys.stderr)
+    
+    # Try API v3 (Cloud)
+    try:
+        url = f"{jira_url}/rest/api/3/myself"
         print(f"  Trying API v3: {url}", file=sys.stderr)
         response = requests.get(url, headers=auth_headers, timeout=5)
         if response.status_code == 200:
-            print("  ✓ API v3 (Cloud) detected", file=sys.stderr)
-            return 3
+            try:
+                data = response.json()
+                # Verify it's actually JSON with expected fields (v3 uses accountId)
+                if isinstance(data, dict) and ("accountId" in data or "self" in data):
+                    print("  ✓ API v3 (Cloud) detected", file=sys.stderr)
+                    return 3
+            except JSONDecodeError:
+                # Not valid JSON
+                print(f"  API v3 returned non-JSON response", file=sys.stderr)
     except requests.RequestException as e:
-        print(f"  API v3 not available: {e}", file=sys.stderr)
-
-    # Fall back to API v2 (Data Center)
-    print("  ✓ Using API v2 (Data Center)", file=sys.stderr)
+        print(f"  API v3 check failed: {e}", file=sys.stderr)
+    
+    # Default to v2 if detection fails (safer for Data Center)
+    print("  ⚠ Could not detect API version, defaulting to v2 (Data Center)", file=sys.stderr)
     return 2
 
 
