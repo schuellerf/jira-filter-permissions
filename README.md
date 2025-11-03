@@ -6,3 +6,13 @@ The script supports both Jira Data Center (API v2) and Cloud (API v3) editions, 
 
 For usage instructions, see [usage.md](usage.md) (generate it with `make usage`).
 
+## Development
+
+This project uses [pre-commit](https://pre-commit.com/) hooks to ensure code quality. To set up:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+The hooks will automatically check for unused imports, formatting issues, and other code quality problems before each commit.

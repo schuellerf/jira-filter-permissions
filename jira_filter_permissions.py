@@ -13,7 +13,7 @@ import os
 import re
 import sys
 from json import JSONDecodeError
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 import requests
 
@@ -37,14 +37,14 @@ def get_auth_headers(api_token: str) -> Dict[str, str]:
 
 def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
     """Try to detect Jira API version by testing both endpoints.
-    
+
     Data Center instances typically use API v2, while Cloud uses v3.
     We try v2 first (more common for self-hosted), then v3.
     We check for valid JSON responses, not just HTTP 200, since some
     endpoints may return 200 with HTML or error messages.
     """
     logger.info(f"Detecting API version for {jira_url}...")
-    
+
     # Try API v2 first (Data Center/Server - more common for self-hosted instances)
     try:
         url = f"{jira_url}/rest/api/2/myself"
@@ -54,7 +54,9 @@ def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
             try:
                 data = response.json()
                 # Verify it's actually JSON with expected fields
-                if isinstance(data, dict) and ("self" in data or "key" in data or "accountId" in data):
+                if isinstance(data, dict) and (
+                    "self" in data or "key" in data or "accountId" in data
+                ):
                     logger.info("API v2 (Data Center/Server) detected")
                     return 2
             except JSONDecodeError:
@@ -62,7 +64,7 @@ def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
                 logger.debug("API v2 returned non-JSON response")
     except requests.RequestException as e:
         logger.debug(f"API v2 check failed: {e}")
-    
+
     # Try API v3 (Cloud)
     try:
         url = f"{jira_url}/rest/api/3/myself"
@@ -80,7 +82,7 @@ def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
                 logger.debug("API v3 returned non-JSON response")
     except requests.RequestException as e:
         logger.debug(f"API v3 check failed: {e}")
-    
+
     # Default to v2 if detection fails (safer for Data Center)
     logger.warning("Could not detect API version, defaulting to v2 (Data Center)")
     return 2
@@ -96,7 +98,7 @@ def get_filter(
     response = requests.get(url, headers=auth_headers)
 
     logger.debug(f"Status code: {response.status_code}")
-    
+
     if response.status_code == 404:
         raise ValueError(f"Filter {filter_id} not found")
     if response.status_code == 401:
@@ -108,7 +110,9 @@ def get_filter(
     except JSONDecodeError as e:
         logger.error(f"Failed to parse JSON response: {e}")
         logger.debug(f"Response text (first 500 chars): {response.text[:500]}")
-        raise ValueError(f"Invalid JSON response from filter endpoint: {e}. Response was: {response.text[:200]}")
+        raise ValueError(
+            f"Invalid JSON response from filter endpoint: {e}. Response was: {response.text[:200]}"
+        )
 
 
 def parse_jql_for_projects(jql: str) -> Set[str]:
@@ -116,11 +120,13 @@ def parse_jql_for_projects(jql: str) -> Set[str]:
     projects = set()
 
     # Pattern for project = "NAME" or project = KEY or project = 12345
-    project_eq_pattern = re.compile(r'project\s*=\s*"?(?P<project>[^"\s()]+)"?', re.IGNORECASE)
+    project_eq_pattern = re.compile(
+        r'project\s*=\s*"?(?P<project>[^"\s()]+)"?', re.IGNORECASE
+    )
 
     # Pattern for project in (P_ID1, P_ID2, ...)
     project_in_pattern = re.compile(
-        r'project\s+in\s*\((?P<projects>[^\)]+)\)', re.IGNORECASE
+        r"project\s+in\s*\((?P<projects>[^\)]+)\)", re.IGNORECASE
     )
 
     # Find all project = matches
@@ -168,7 +174,9 @@ def resolve_project(
             except JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response: {e}")
                 logger.debug(f"Response text (first 500 chars): {response.text[:500]}")
-                raise ValueError(f"Invalid JSON response when resolving project '{identifier}': {e}. Response: {response.text[:200]}")
+                raise ValueError(
+                    f"Invalid JSON response when resolving project '{identifier}': {e}. Response: {response.text[:200]}"
+                )
             project_id = str(project_data["id"])
         except requests.RequestException as e:
             logger.error(f"Error fetching project '{identifier}': {e}")
@@ -189,7 +197,9 @@ def resolve_project(
         except JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")
             logger.debug(f"Response text (first 500 chars): {response.text[:500]}")
-            raise ValueError(f"Invalid JSON response when fetching project ID '{project_id}': {e}. Response: {response.text[:200]}")
+            raise ValueError(
+                f"Invalid JSON response when fetching project ID '{project_id}': {e}. Response: {response.text[:200]}"
+            )
         return {
             "id": str(project_data["id"]),
             "key": project_data.get("key", ""),
@@ -236,7 +246,9 @@ def get_permissions(
         except JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {e}")
             logger.debug(f"Response text (first 500 chars): {response.text[:500]}")
-            raise ValueError(f"Invalid JSON response when checking permissions for project {project_id}: {e}. Response: {response.text[:200]}")
+            raise ValueError(
+                f"Invalid JSON response when checking permissions for project {project_id}: {e}. Response: {response.text[:200]}"
+            )
 
         # Log the full permissions structure (DEBUG level)
         logger.debug("Full permissions response structure:")
@@ -266,7 +278,11 @@ def get_permissions(
 
 
 def check_permission(
-    project_id: str, jira_url: str, api_version: int, auth_headers: Dict[str, str], permission_key: str
+    project_id: str,
+    jira_url: str,
+    api_version: int,
+    auth_headers: Dict[str, str],
+    permission_key: str,
 ) -> bool:
     """Check if user has a specific permission for the project."""
     permissions = get_permissions(project_id, jira_url, api_version, auth_headers)
@@ -281,7 +297,9 @@ def check_permission(
             have_permission = perm_value.get("havePermission", False)
             perm_id = perm_value.get("id", "N/A")
             perm_name = perm_value.get("name", "N/A")
-            logger.debug(f"  - {perm_key}: id={perm_id}, name='{perm_name}', havePermission={have_permission}")
+            logger.debug(
+                f"  - {perm_key}: id={perm_id}, name='{perm_name}', havePermission={have_permission}"
+            )
         else:
             logger.debug(f"  - {perm_key}: {perm_value}")
 
@@ -293,18 +311,26 @@ def check_permission(
             logger.debug(f"Checking {permission_key}: havePermission={has_permission}")
             return has_permission
         else:
-            logger.debug(f"Permission key {permission_key} exists but has unexpected format: {perm}")
+            logger.debug(
+                f"Permission key {permission_key} exists but has unexpected format: {perm}"
+            )
             return False
     else:
-        logger.warning(f"Permission key '{permission_key}' not found in available permissions")
+        logger.warning(
+            f"Permission key '{permission_key}' not found in available permissions"
+        )
         logger.debug("Available permission keys listed above.")
         return False
 
 
-def format_text_output(filter_data: Dict, project_results: List[Dict], permission_key: str) -> str:
+def format_text_output(
+    filter_data: Dict, project_results: List[Dict], permission_key: str
+) -> str:
     """Format results as text output."""
     lines = []
-    lines.append(f"Filter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})")
+    lines.append(
+        f"Filter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})"
+    )
     lines.append(f"JQL: {filter_data.get('jql', 'N/A')}")
     lines.append("")
     lines.append("Projects:")
@@ -323,7 +349,9 @@ def format_text_output(filter_data: Dict, project_results: List[Dict], permissio
     return "\n".join(lines)
 
 
-def format_json_output(filter_data: Dict, project_results: List[Dict], permission_key: str) -> Dict:
+def format_json_output(
+    filter_data: Dict, project_results: List[Dict], permission_key: str
+) -> Dict:
     """Format results as JSON output."""
     return {
         "filter": {
@@ -415,7 +443,7 @@ def main():
     # Validate filter_id is provided
     if not args.filter_id:
         parser.error("filter_id is required")
-    
+
     # Validate filter_id is numeric
     if not args.filter_id.isdigit():
         logger.error(f"filter_id must be numeric, got '{args.filter_id}'")
@@ -426,7 +454,9 @@ def main():
     api_token = args.token or os.getenv("JIRA_API_TOKEN")
 
     if not api_token:
-        logger.error("Jira API token required. Set JIRA_API_TOKEN environment variable or use --token")
+        logger.error(
+            "Jira API token required. Set JIRA_API_TOKEN environment variable or use --token"
+        )
         sys.exit(1)
 
     # Remove trailing slash from URL
@@ -453,14 +483,18 @@ def main():
             sys.exit(0)
 
         # Print filter info (to stdout)
-        print(f"\nFilter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})")
+        print(
+            f"\nFilter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})"
+        )
         print(f"JQL: {jql}")
         print()
 
         # Parse JQL for projects
         logger.info("Step 2: Parsing JQL for project references...")
         project_identifiers = parse_jql_for_projects(jql)
-        logger.info(f"Found {len(project_identifiers)} project reference(s): {sorted(project_identifiers)}")
+        logger.info(
+            f"Found {len(project_identifiers)} project reference(s): {sorted(project_identifiers)}"
+        )
 
         if not project_identifiers:
             print("No projects found in filter JQL")
@@ -470,7 +504,9 @@ def main():
         logger.info("Step 3: Resolving projects...")
         projects = []
         for identifier in sorted(project_identifiers):
-            project_info = resolve_project(identifier, jira_url, api_version, auth_headers)
+            project_info = resolve_project(
+                identifier, jira_url, api_version, auth_headers
+            )
             if project_info:
                 projects.append(project_info)
 
@@ -483,25 +519,33 @@ def main():
             logger.info("Collecting all permission keys from all projects...")
             all_permission_keys = set()
             permission_details = {}  # key -> {id, name, projects_with_permission}
-            
+
             for project_info in projects:
                 project_id = project_info["id"]
                 project_key = project_info.get("key", "N/A")
                 logger.info(f"Checking permissions for {project_key}...")
-                
-                permissions = get_permissions(project_id, jira_url, api_version, auth_headers)
+
+                permissions = get_permissions(
+                    project_id, jira_url, api_version, auth_headers
+                )
                 if permissions:
                     for perm_key, perm_value in permissions.items():
                         all_permission_keys.add(perm_key)
                         if perm_key not in permission_details:
                             permission_details[perm_key] = {
-                                "id": perm_value.get("id", "N/A") if isinstance(perm_value, dict) else "N/A",
-                                "name": perm_value.get("name", "N/A") if isinstance(perm_value, dict) else "N/A",
-                                "projects": []
+                                "id": perm_value.get("id", "N/A")
+                                if isinstance(perm_value, dict)
+                                else "N/A",
+                                "name": perm_value.get("name", "N/A")
+                                if isinstance(perm_value, dict)
+                                else "N/A",
+                                "projects": [],
                             }
-                        if isinstance(perm_value, dict) and perm_value.get("havePermission", False):
+                        if isinstance(perm_value, dict) and perm_value.get(
+                            "havePermission", False
+                        ):
                             permission_details[perm_key]["projects"].append(project_key)
-            
+
             print()
             title = "All available permission keys:"
             print(title)
@@ -512,13 +556,13 @@ def main():
                 details = permission_details.get(perm_key, {})
                 perm_name = details.get("name", "N/A")
                 projects_with = details.get("projects", [])
-                
+
                 print(f'{perm_key} "{perm_name}"')
                 if projects_with:
                     projects_str = ", ".join(sorted(projects_with))
-                    print(f'  Granted in projects: {projects_str}')
+                    print(f"  Granted in projects: {projects_str}")
                 else:
-                    print(f'  Not granted in any project')
+                    print("  Not granted in any project")
             sys.exit(0)
 
         # Check permissions
@@ -527,21 +571,31 @@ def main():
         project_results = []
         for project_info in projects:
             has_permission = check_permission(
-                project_info["id"], jira_url, api_version, auth_headers, args.permission_key
+                project_info["id"],
+                jira_url,
+                api_version,
+                auth_headers,
+                args.permission_key,
             )
             project_info["has_permission"] = has_permission
             project_results.append(project_info)
-            logger.info(f"{project_info.get('key', 'N/A')} - Permission: {'Yes' if has_permission else 'No'}")
+            logger.info(
+                f"{project_info.get('key', 'N/A')} - Permission: {'Yes' if has_permission else 'No'}"
+            )
 
         # Output results
         logger.info("Step 5: Generating output...")
         if args.json:
-            output = format_json_output(filter_data, project_results, args.permission_key)
+            output = format_json_output(
+                filter_data, project_results, args.permission_key
+            )
             with open(args.json_file, "w") as f:
                 json.dump(output, f, indent=2)
             print(f"Results exported to {args.json_file}")
         else:
-            output_text = format_text_output(filter_data, project_results, args.permission_key)
+            output_text = format_text_output(
+                filter_data, project_results, args.permission_key
+            )
             print(output_text)
         logger.info("Complete")
 
@@ -556,7 +610,9 @@ def main():
         sys.exit(1)
     except JSONDecodeError as e:
         logger.error(f"JSON parsing error: {e}")
-        logger.info("This usually means the server returned HTML or plain text instead of JSON.")
+        logger.info(
+            "This usually means the server returned HTML or plain text instead of JSON."
+        )
         logger.info("Check that the Jira URL and API version are correct.")
         sys.exit(1)
     except Exception as e:
@@ -566,4 +622,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
