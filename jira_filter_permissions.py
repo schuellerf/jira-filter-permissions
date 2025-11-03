@@ -215,13 +215,13 @@ def log_permissions_structure(obj: Dict, indent: int = 0, prefix: str = "") -> N
             logger.debug(f"{indent_str}{prefix}{key}: {value}")
 
 
-def check_create_sprint_permission(
+def get_permissions(
     project_id: str, jira_url: str, api_version: int, auth_headers: Dict[str, str]
-) -> bool:
-    """Check if user has 'Create Sprint' permission for the project."""
+) -> Optional[Dict]:
+    """Get all permissions for a project. Returns permissions dict or None on error."""
     url = f"{jira_url}/rest/api/{api_version}/mypermissions"
     params = {"projectId": project_id}
-    logger.debug(f"Checking permissions for project {project_id}")
+    logger.debug(f"Getting permissions for project {project_id}")
     logger.debug(f"URL: {url}?projectId={project_id}")
 
     try:
@@ -258,58 +258,50 @@ def check_create_sprint_permission(
                 # Try using the whole response as permissions
                 permissions = permissions_data
                 logger.debug("Using entire response as permissions object")
-        
-        # List all available permission keys (DEBUG level)
-        logger.debug("Available permission keys:")
-        sprint_related_keys = []
-        for perm_key in sorted(permissions.keys()):
-            perm_value = permissions[perm_key]
-            if isinstance(perm_value, dict):
-                have_permission = perm_value.get("havePermission", False)
-                perm_id = perm_value.get("id", "N/A")
-                perm_name = perm_value.get("name", "N/A")
-                logger.debug(f"  - {perm_key}: id={perm_id}, name='{perm_name}', havePermission={have_permission}")
-                # Look for sprint-related permissions
-                if any(word in perm_key.upper() for word in ["SPRINT", "MANAGE", "CREATE"]):
-                    sprint_related_keys.append(perm_key)
-            else:
-                logger.debug(f"  - {perm_key}: {perm_value}")
 
-        if sprint_related_keys:
-            logger.debug(f"Sprint-related permission keys found: {sprint_related_keys}")
-        else:
-            logger.warning("No obvious sprint-related permission keys found!")
-
-        # Try different possible permission keys
-        possible_keys = ["CREATE_SPRINTS", "MANAGE_SPRINTS", "SPRINT_PERMISSION", "CREATE_SPRINT"]
-        has_permission = False
-        found_key = None
-        
-        for key in possible_keys:
-            if key in permissions:
-                perm = permissions[key]
-                if isinstance(perm, dict):
-                    has_perm = perm.get("havePermission", False)
-                    logger.debug(f"Checking {key}: havePermission={has_perm}")
-                    if has_perm:
-                        has_permission = True
-                        found_key = key
-                else:
-                    logger.debug(f"Checking {key}: value={perm}")
-        
-        if found_key:
-            logger.debug(f"Found permission via key: {found_key}")
-        else:
-            logger.warning(f"No permission found with keys: {possible_keys}")
-            logger.debug("Please identify the correct permission key from the list above.")
-
-        return has_permission
+        return permissions
     except requests.RequestException as e:
-        logger.error(f"Error checking permissions for project {project_id}: {e}")
+        logger.error(f"Error getting permissions for project {project_id}: {e}")
+        return None
+
+
+def check_permission(
+    project_id: str, jira_url: str, api_version: int, auth_headers: Dict[str, str], permission_key: str
+) -> bool:
+    """Check if user has a specific permission for the project."""
+    permissions = get_permissions(project_id, jira_url, api_version, auth_headers)
+    if permissions is None:
+        return False
+
+    # List all available permission keys (DEBUG level)
+    logger.debug("Available permission keys:")
+    for perm_key in sorted(permissions.keys()):
+        perm_value = permissions[perm_key]
+        if isinstance(perm_value, dict):
+            have_permission = perm_value.get("havePermission", False)
+            perm_id = perm_value.get("id", "N/A")
+            perm_name = perm_value.get("name", "N/A")
+            logger.debug(f"  - {perm_key}: id={perm_id}, name='{perm_name}', havePermission={have_permission}")
+        else:
+            logger.debug(f"  - {perm_key}: {perm_value}")
+
+    # Check the specified permission key
+    if permission_key in permissions:
+        perm = permissions[permission_key]
+        if isinstance(perm, dict):
+            has_permission = perm.get("havePermission", False)
+            logger.debug(f"Checking {permission_key}: havePermission={has_permission}")
+            return has_permission
+        else:
+            logger.debug(f"Permission key {permission_key} exists but has unexpected format: {perm}")
+            return False
+    else:
+        logger.warning(f"Permission key '{permission_key}' not found in available permissions")
+        logger.debug("Available permission keys listed above.")
         return False
 
 
-def format_text_output(filter_data: Dict, project_results: List[Dict]) -> str:
+def format_text_output(filter_data: Dict, project_results: List[Dict], permission_key: str) -> str:
     """Format results as text output."""
     lines = []
     lines.append(f"Filter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})")
@@ -321,17 +313,17 @@ def format_text_output(filter_data: Dict, project_results: List[Dict]) -> str:
         key = project.get("key", "N/A")
         project_id = project.get("id", "N/A")
         name = project.get("name", "N/A")
-        has_permission = project.get("has_create_sprint_permission", False)
+        has_permission = project.get("has_permission", False)
         permission_text = "Yes" if has_permission else "No"
 
         lines.append(
-            f'  {key} (ID: {project_id}, Name: "{name}"): Create Sprint Permission: {permission_text}'
+            f'  {key} (ID: {project_id}, Name: "{name}"): {permission_key} Permission: {permission_text}'
         )
 
     return "\n".join(lines)
 
 
-def format_json_output(filter_data: Dict, project_results: List[Dict]) -> Dict:
+def format_json_output(filter_data: Dict, project_results: List[Dict], permission_key: str) -> Dict:
     """Format results as JSON output."""
     return {
         "filter": {
@@ -339,6 +331,7 @@ def format_json_output(filter_data: Dict, project_results: List[Dict]) -> Dict:
             "name": filter_data.get("name", ""),
             "jql": filter_data.get("jql", ""),
         },
+        "permission_key": permission_key,
         "projects": project_results,
     }
 
@@ -391,6 +384,17 @@ def main():
         "-v",
         action="store_true",
         help="Enable verbose output (DEBUG level logging)",
+    )
+    parser.add_argument(
+        "--list-permissions",
+        action="store_true",
+        help="List all available permission keys (union over all projects) and exit",
+    )
+    parser.add_argument(
+        "--permission-key",
+        type=str,
+        default="MANAGE_SPRINTS_PERMISSION",
+        help="Permission key to check (default: MANAGE_SPRINTS_PERMISSION)",
     )
 
     args = parser.parse_args()
@@ -462,28 +466,82 @@ def main():
             print("No projects found in filter JQL")
             sys.exit(0)
 
-        # Resolve projects and check permissions
-        logger.info("Step 3: Resolving projects and checking permissions...")
-        project_results = []
+        # Resolve projects
+        logger.info("Step 3: Resolving projects...")
+        projects = []
         for identifier in sorted(project_identifiers):
             project_info = resolve_project(identifier, jira_url, api_version, auth_headers)
             if project_info:
-                has_permission = check_create_sprint_permission(
-                    project_info["id"], jira_url, api_version, auth_headers
-                )
-                project_info["has_create_sprint_permission"] = has_permission
-                project_results.append(project_info)
-                logger.info(f"{project_info.get('key', 'N/A')} - Permission: {'Yes' if has_permission else 'No'}")
+                projects.append(project_info)
+
+        if not projects:
+            logger.warning("No valid projects found")
+            sys.exit(0)
+
+        # Handle --list-permissions mode
+        if args.list_permissions:
+            logger.info("Collecting all permission keys from all projects...")
+            all_permission_keys = set()
+            permission_details = {}  # key -> {id, name, projects_with_permission}
+            
+            for project_info in projects:
+                project_id = project_info["id"]
+                project_key = project_info.get("key", "N/A")
+                logger.info(f"Checking permissions for {project_key}...")
+                
+                permissions = get_permissions(project_id, jira_url, api_version, auth_headers)
+                if permissions:
+                    for perm_key, perm_value in permissions.items():
+                        all_permission_keys.add(perm_key)
+                        if perm_key not in permission_details:
+                            permission_details[perm_key] = {
+                                "id": perm_value.get("id", "N/A") if isinstance(perm_value, dict) else "N/A",
+                                "name": perm_value.get("name", "N/A") if isinstance(perm_value, dict) else "N/A",
+                                "projects": []
+                            }
+                        if isinstance(perm_value, dict) and perm_value.get("havePermission", False):
+                            permission_details[perm_key]["projects"].append(project_key)
+            
+            print()
+            title = "All available permission keys:"
+            print(title)
+            print("=" * len(title))
+            print()
+            # Print all permission keys (two lines each)
+            for perm_key in sorted(all_permission_keys):
+                details = permission_details.get(perm_key, {})
+                perm_name = details.get("name", "N/A")
+                projects_with = details.get("projects", [])
+                
+                print(f'{perm_key} "{perm_name}"')
+                if projects_with:
+                    projects_str = ", ".join(sorted(projects_with))
+                    print(f'  Granted in projects: {projects_str}')
+                else:
+                    print(f'  Not granted in any project')
+            sys.exit(0)
+
+        # Check permissions
+        logger.info("Step 4: Checking permissions...")
+        logger.info(f"Checking permission key: {args.permission_key}")
+        project_results = []
+        for project_info in projects:
+            has_permission = check_permission(
+                project_info["id"], jira_url, api_version, auth_headers, args.permission_key
+            )
+            project_info["has_permission"] = has_permission
+            project_results.append(project_info)
+            logger.info(f"{project_info.get('key', 'N/A')} - Permission: {'Yes' if has_permission else 'No'}")
 
         # Output results
-        logger.info("Step 4: Generating output...")
+        logger.info("Step 5: Generating output...")
         if args.json:
-            output = format_json_output(filter_data, project_results)
+            output = format_json_output(filter_data, project_results, args.permission_key)
             with open(args.json_file, "w") as f:
                 json.dump(output, f, indent=2)
             print(f"Results exported to {args.json_file}")
         else:
-            output_text = format_text_output(filter_data, project_results)
+            output_text = format_text_output(filter_data, project_results, args.permission_key)
             print(output_text)
         logger.info("Complete")
 
