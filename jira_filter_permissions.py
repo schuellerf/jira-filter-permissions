@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+from json import JSONDecodeError
 from typing import Dict, List, Optional, Set, Tuple
 
 import requests
@@ -27,19 +28,20 @@ def get_auth_headers(api_token: str) -> Dict[str, str]:
 
 def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
     """Try to detect Jira API version by testing both endpoints."""
+    print(f"Detecting API version for {jira_url}...", file=sys.stderr)
     # Try API v3 first (Cloud)
     try:
-        response = requests.get(
-            f"{jira_url}/rest/api/3/serverInfo",
-            headers=auth_headers,
-            timeout=5,
-        )
+        url = f"{jira_url}/rest/api/3/serverInfo"
+        print(f"  Trying API v3: {url}", file=sys.stderr)
+        response = requests.get(url, headers=auth_headers, timeout=5)
         if response.status_code == 200:
+            print("  ✓ API v3 (Cloud) detected", file=sys.stderr)
             return 3
-    except requests.RequestException:
-        pass
+    except requests.RequestException as e:
+        print(f"  API v3 not available: {e}", file=sys.stderr)
 
     # Fall back to API v2 (Data Center)
+    print("  ✓ Using API v2 (Data Center)", file=sys.stderr)
     return 2
 
 
@@ -48,15 +50,24 @@ def get_filter(
 ) -> Dict:
     """Fetch filter details from Jira."""
     url = f"{jira_url}/rest/api/{api_version}/filter/{filter_id}"
+    print(f"Fetching filter {filter_id}...", file=sys.stderr)
+    print(f"  URL: {url}", file=sys.stderr)
     response = requests.get(url, headers=auth_headers)
 
+    print(f"  Status code: {response.status_code}", file=sys.stderr)
+    
     if response.status_code == 404:
         raise ValueError(f"Filter {filter_id} not found")
     if response.status_code == 401:
         raise ValueError("Authentication failed - check your API token")
     response.raise_for_status()
 
-    return response.json()
+    try:
+        return response.json()
+    except JSONDecodeError as e:
+        print(f"  Error: Failed to parse JSON response", file=sys.stderr)
+        print(f"  Response text (first 500 chars): {response.text[:500]}", file=sys.stderr)
+        raise ValueError(f"Invalid JSON response from filter endpoint: {e}. Response was: {response.text[:200]}")
 
 
 def parse_jql_for_projects(jql: str) -> Set[str]:
@@ -93,21 +104,30 @@ def resolve_project(
     identifier: str, jira_url: str, api_version: int, auth_headers: Dict[str, str]
 ) -> Optional[Dict[str, str]]:
     """Convert project identifier (key/name/ID) to project details."""
+    print(f"  Resolving project: {identifier}", file=sys.stderr)
     # If identifier is numeric, treat it as project ID
     if identifier.isdigit():
         project_id = identifier
+        print(f"    Treating as project ID", file=sys.stderr)
     else:
         # Otherwise, fetch project info to get ID
         url = f"{jira_url}/rest/api/{api_version}/project/{identifier}"
+        print(f"    Fetching project by key/name: {url}", file=sys.stderr)
         try:
             response = requests.get(url, headers=auth_headers)
+            print(f"    Status code: {response.status_code}", file=sys.stderr)
             if response.status_code == 404:
                 print(f"Warning: Project '{identifier}' not found", file=sys.stderr)
                 return None
             if response.status_code == 401:
                 raise ValueError("Authentication failed - check your API token")
             response.raise_for_status()
-            project_data = response.json()
+            try:
+                project_data = response.json()
+            except JSONDecodeError as e:
+                print(f"    Error: Failed to parse JSON response", file=sys.stderr)
+                print(f"    Response text (first 500 chars): {response.text[:500]}", file=sys.stderr)
+                raise ValueError(f"Invalid JSON response when resolving project '{identifier}': {e}. Response: {response.text[:200]}")
             project_id = str(project_data["id"])
         except requests.RequestException as e:
             print(f"Error fetching project '{identifier}': {e}", file=sys.stderr)
@@ -115,13 +135,20 @@ def resolve_project(
 
     # Fetch full project details using ID
     url = f"{jira_url}/rest/api/{api_version}/project/{project_id}"
+    print(f"    Fetching project details by ID: {url}", file=sys.stderr)
     try:
         response = requests.get(url, headers=auth_headers)
+        print(f"    Status code: {response.status_code}", file=sys.stderr)
         if response.status_code == 404:
             print(f"Warning: Project ID '{project_id}' not found", file=sys.stderr)
             return None
         response.raise_for_status()
-        project_data = response.json()
+        try:
+            project_data = response.json()
+        except JSONDecodeError as e:
+            print(f"    Error: Failed to parse JSON response", file=sys.stderr)
+            print(f"    Response text (first 500 chars): {response.text[:500]}", file=sys.stderr)
+            raise ValueError(f"Invalid JSON response when fetching project ID '{project_id}': {e}. Response: {response.text[:200]}")
         return {
             "id": str(project_data["id"]),
             "key": project_data.get("key", ""),
@@ -138,14 +165,24 @@ def check_create_sprint_permission(
     """Check if user has 'Create Sprint' permission for the project."""
     url = f"{jira_url}/rest/api/{api_version}/mypermissions"
     params = {"projectId": project_id}
+    print(f"    Checking permissions for project {project_id}...", file=sys.stderr)
+    print(f"      URL: {url}?projectId={project_id}", file=sys.stderr)
 
     try:
         response = requests.get(url, headers=auth_headers, params=params)
+        print(f"      Status code: {response.status_code}", file=sys.stderr)
         if response.status_code == 401:
             raise ValueError("Authentication failed - check your API token")
         response.raise_for_status()
 
-        permissions = response.json().get("permissions", {})
+        try:
+            permissions_data = response.json()
+        except JSONDecodeError as e:
+            print(f"      Error: Failed to parse JSON response", file=sys.stderr)
+            print(f"      Response text (first 500 chars): {response.text[:500]}", file=sys.stderr)
+            raise ValueError(f"Invalid JSON response when checking permissions for project {project_id}: {e}. Response: {response.text[:200]}")
+
+        permissions = permissions_data.get("permissions", {})
         create_sprint = permissions.get("CREATE_SPRINTS", {})
         return create_sprint.get("havePermission", False)
     except requests.RequestException as e:
@@ -275,7 +312,9 @@ def main():
 
     try:
         # Get filter
+        print("Step 1: Fetching filter from Jira...", file=sys.stderr)
         filter_data = get_filter(jira_url, args.filter_id, api_version, auth_headers)
+        print("  ✓ Filter fetched successfully", file=sys.stderr)
         jql = filter_data.get("jql", "")
 
         if not jql:
@@ -283,18 +322,21 @@ def main():
             sys.exit(0)
 
         # Print filter info
-        print(f"Filter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})")
+        print(f"\nFilter: {filter_data.get('name', 'Unknown')} (ID: {filter_data.get('id', 'Unknown')})")
         print(f"JQL: {jql}")
         print()
 
         # Parse JQL for projects
+        print("Step 2: Parsing JQL for project references...", file=sys.stderr)
         project_identifiers = parse_jql_for_projects(jql)
+        print(f"  ✓ Found {len(project_identifiers)} project reference(s): {sorted(project_identifiers)}", file=sys.stderr)
 
         if not project_identifiers:
             print("No projects found in filter JQL")
             sys.exit(0)
 
         # Resolve projects and check permissions
+        print(f"\nStep 3: Resolving projects and checking permissions...", file=sys.stderr)
         project_results = []
         for identifier in sorted(project_identifiers):
             project_info = resolve_project(identifier, jira_url, api_version, auth_headers)
@@ -304,8 +346,10 @@ def main():
                 )
                 project_info["has_create_sprint_permission"] = has_permission
                 project_results.append(project_info)
+                print(f"  ✓ {project_info.get('key', 'N/A')} - Permission: {'Yes' if has_permission else 'No'}", file=sys.stderr)
 
         # Output results
+        print("\nStep 4: Generating output...", file=sys.stderr)
         if args.json:
             output = format_json_output(filter_data, project_results)
             with open(args.json_file, "w") as f:
@@ -314,17 +358,26 @@ def main():
         else:
             output_text = format_text_output(filter_data, project_results)
             print(output_text)
+        print("  ✓ Complete", file=sys.stderr)
 
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        print(f"\nError: {e}", file=sys.stderr)
         sys.exit(1)
     except requests.RequestException as e:
-        print(f"HTTP error: {e}", file=sys.stderr)
-        if hasattr(e.response, "text"):
-            print(f"Response: {e.response.text}", file=sys.stderr)
+        print(f"\nHTTP error: {e}", file=sys.stderr)
+        if hasattr(e, "response") and e.response is not None:
+            print(f"Status code: {e.response.status_code}", file=sys.stderr)
+            print(f"Response: {e.response.text[:500]}", file=sys.stderr)
+        sys.exit(1)
+    except JSONDecodeError as e:
+        print(f"\nJSON parsing error: {e}", file=sys.stderr)
+        print(f"This usually means the server returned HTML or plain text instead of JSON.", file=sys.stderr)
+        print(f"Check that the Jira URL and API version are correct.", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
-        print(f"Unexpected error: {e}", file=sys.stderr)
+        print(f"\nUnexpected error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
