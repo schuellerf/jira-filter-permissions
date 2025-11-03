@@ -4,6 +4,8 @@ This Python script retrieves a Jira filter by ID, parses its JQL to extract proj
 
 The script supports both Jira Data Center (API v2) and Cloud (API v3) editions, automatically detecting the API version or allowing manual override.
 
+**Limitation:** The script only parses the given filter's JQL directly. It does not currently support nested filters (filters that reference other filters).
+
 For usage instructions, see [usage.md](usage.md) (generate it with `make usage`).
 
 ## Development
