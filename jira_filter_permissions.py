@@ -40,12 +40,16 @@ def get_auth_headers(email: str, api_token: str) -> Dict[str, str]:
 def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
     """Try to detect Jira API version by testing both endpoints.
 
-    Data Center instances typically use API v2, while Cloud uses v3.
-    We try v2 first (more common for self-hosted), then v3.
-    We check for valid JSON responses, not just HTTP 200, since some
-    endpoints may return 200 with HTML or error messages.
+    Cloud (*.atlassian.net) prefers API v3. Data Center typically uses v2.
+    Cloud also serves many v2 endpoints, so hostname and accountId are used
+    to avoid mis-detecting Cloud as Data Center.
     """
     logger.info(f"Detecting API version for {jira_url}...")
+
+    # Cloud sites always use API v3 for this tool
+    if ".atlassian.net" in jira_url:
+        logger.info("API v3 (Cloud) selected based on atlassian.net hostname")
+        return 3
 
     # Try API v2 first (Data Center/Server - more common for self-hosted instances)
     try:
@@ -67,7 +71,7 @@ def detect_api_version(jira_url: str, auth_headers: Dict[str, str]) -> int:
     except requests.RequestException as e:
         logger.debug(f"API v2 check failed: {e}")
 
-    # Try API v3 (Cloud)
+    # Try API v3 (Cloud or newer instances)
     try:
         url = f"{jira_url}/rest/api/3/myself"
         logger.debug(f"Trying API v3: {url}")
@@ -227,20 +231,54 @@ def log_permissions_structure(obj: Dict, indent: int = 0, prefix: str = "") -> N
             logger.debug(f"{indent_str}{prefix}{key}: {value}")
 
 
+def get_all_permission_keys(
+    jira_url: str, api_version: int, auth_headers: Dict[str, str]
+) -> List[str]:
+    """Return all permission keys defined on the Jira instance."""
+    url = f"{jira_url}/rest/api/{api_version}/permissions"
+    logger.debug(f"Fetching all permission definitions: {url}")
+    response = requests.get(url, headers=auth_headers)
+    if response.status_code == 401:
+        raise ValueError("Authentication failed - check your API token")
+    response.raise_for_status()
+    data = response.json()
+    permissions = data.get("permissions", data)
+    if not isinstance(permissions, dict):
+        raise ValueError("Unexpected response from /permissions endpoint")
+    return sorted(permissions.keys())
+
+
 def get_permissions(
-    project_id: str, jira_url: str, api_version: int, auth_headers: Dict[str, str]
+    project_id: str,
+    jira_url: str,
+    api_version: int,
+    auth_headers: Dict[str, str],
+    permission_keys: List[str],
 ) -> Optional[Dict]:
-    """Get all permissions for a project. Returns permissions dict or None on error."""
+    """Get permissions for a project. Returns permissions dict or None on error.
+
+    Jira Cloud requires the ``permissions`` query parameter (comma-separated
+    keys). Data Center accepts it as well, so we always send it.
+    """
+    if not permission_keys:
+        raise ValueError("permission_keys must not be empty")
+
     url = f"{jira_url}/rest/api/{api_version}/mypermissions"
-    params = {"projectId": project_id}
+    params = {
+        "projectId": project_id,
+        "permissions": ",".join(permission_keys),
+    }
     logger.debug(f"Getting permissions for project {project_id}")
-    logger.debug(f"URL: {url}?projectId={project_id}")
+    logger.debug(f"URL: {url}")
+    logger.debug(f"Params: projectId={project_id}, permissions={params['permissions']}")
 
     try:
         response = requests.get(url, headers=auth_headers, params=params)
         logger.debug(f"Status code: {response.status_code}")
         if response.status_code == 401:
             raise ValueError("Authentication failed - check your API token")
+        if response.status_code >= 400:
+            logger.debug(f"Error response body: {response.text[:500]}")
         response.raise_for_status()
 
         try:
@@ -287,7 +325,9 @@ def check_permission(
     permission_key: str,
 ) -> bool:
     """Check if user has a specific permission for the project."""
-    permissions = get_permissions(project_id, jira_url, api_version, auth_headers)
+    permissions = get_permissions(
+        project_id, jira_url, api_version, auth_headers, [permission_key]
+    )
     if permissions is None:
         return False
 
@@ -531,6 +571,12 @@ def main():
         # Handle --list-permissions mode
         if args.list_permissions:
             logger.info("Collecting all permission keys from all projects...")
+            all_permission_keys_list = get_all_permission_keys(
+                jira_url, api_version, auth_headers
+            )
+            logger.info(
+                f"Found {len(all_permission_keys_list)} permission definition(s)"
+            )
             all_permission_keys = set()
             permission_details = {}  # key -> {id, name, projects_with_permission}
 
@@ -540,7 +586,11 @@ def main():
                 logger.info(f"Checking permissions for {project_key}...")
 
                 permissions = get_permissions(
-                    project_id, jira_url, api_version, auth_headers
+                    project_id,
+                    jira_url,
+                    api_version,
+                    auth_headers,
+                    all_permission_keys_list,
                 )
                 if permissions:
                     for perm_key, perm_value in permissions.items():
