@@ -10,7 +10,23 @@ For usage instructions, see [usage.md](usage.md) (generate it with `make usage`)
 
 ## Authentication
 
-Set `JIRA_API_TOKEN` (or pass `--token`) with a Jira API token.
+The script uses HTTP Basic auth with your Atlassian account email and API token
+(`email:token`). Bearer tokens are not supported.
+
+Set these environment variables (or the matching CLI flags):
+
+| Variable | Flag | Example | Notes |
+|---|---|---|---|
+| `JIRA_URL` | `--url` | `https://redhat.atlassian.net` | Base site URL only — no path (`/jira`, `/browse/...`, etc.). A trailing slash is optional and is stripped. |
+| `JIRA_EMAIL` | `--email` | `you@example.com` | Required. Atlassian account email used with the API token. |
+| `JIRA_API_TOKEN` | `--token` | *(your token)* | Required. See below. |
+
+Examples:
+
+```bash
+export JIRA_EMAIL=you@example.com
+export JIRA_API_TOKEN=your-api-token
+```
 
 For **Jira Cloud**, create a token as follows:
 

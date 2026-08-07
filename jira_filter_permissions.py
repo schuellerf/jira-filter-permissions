@@ -7,6 +7,7 @@ and checks "Create Sprint" permissions for each project.
 """
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -26,10 +27,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_auth_headers(api_token: str) -> Dict[str, str]:
-    """Create authentication headers for Jira API."""
+def get_auth_headers(email: str, api_token: str) -> Dict[str, str]:
+    """Create authentication headers for Jira API (Basic auth: email + API token)."""
+    credentials = base64.b64encode(f"{email}:{api_token}".encode()).decode()
     return {
-        "Authorization": f"Bearer {api_token}",
+        "Authorization": f"Basic {credentials}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
@@ -397,6 +399,11 @@ def main():
         help="Jira API token (overrides JIRA_API_TOKEN environment variable)",
     )
     parser.add_argument(
+        "--email",
+        type=str,
+        help="Jira account email (overrides JIRA_EMAIL environment variable)",
+    )
+    parser.add_argument(
         "--api-version",
         type=int,
         choices=[2, 3],
@@ -450,8 +457,9 @@ def main():
         sys.exit(1)
 
     # Get configuration from environment or arguments
-    jira_url = args.url or os.getenv("JIRA_URL", "https://issues.redhat.com")
+    jira_url = args.url or os.getenv("JIRA_URL", "https://redhat.atlassian.net")
     api_token = args.token or os.getenv("JIRA_API_TOKEN")
+    jira_email = args.email or os.getenv("JIRA_EMAIL")
 
     if not api_token:
         logger.error(
@@ -459,11 +467,17 @@ def main():
         )
         sys.exit(1)
 
+    if not jira_email:
+        logger.error(
+            "Jira account email required. Set JIRA_EMAIL environment variable or use --email"
+        )
+        sys.exit(1)
+
     # Remove trailing slash from URL
     jira_url = jira_url.rstrip("/")
 
-    # Setup authentication
-    auth_headers = get_auth_headers(api_token)
+    # Setup authentication (Basic auth: email + API token)
+    auth_headers = get_auth_headers(jira_email, api_token)
 
     # Determine API version
     if args.api_version:

@@ -1,6 +1,6 @@
 ```
 usage: jira_filter_permissions.py [-h] [--json] [--json-file JSON_FILE]
-                                  [--url URL] [--token TOKEN]
+                                  [--url URL] [--token TOKEN] [--email EMAIL]
                                   [--api-version {2,3}] [--export-usage]
                                   [--verbose] [--list-permissions]
                                   [--permission-key PERMISSION_KEY]
@@ -20,6 +20,8 @@ options:
   --url URL             Jira instance URL (overrides JIRA_URL environment
                         variable)
   --token TOKEN         Jira API token (overrides JIRA_API_TOKEN environment
+                        variable)
+  --email EMAIL         Jira account email (overrides JIRA_EMAIL environment
                         variable)
   --api-version {2,3}   Force API version (2 for Data Center, 3 for Cloud)
   --export-usage        Export usage documentation in markdown code block
