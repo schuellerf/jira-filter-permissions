@@ -8,6 +8,17 @@ The script supports both Jira Data Center (API v2) and Cloud (API v3) editions, 
 
 For usage instructions, see [usage.md](usage.md) (generate it with `make usage`).
 
+## Authentication
+
+Set `JIRA_API_TOKEN` (or pass `--token`) with a Jira API token.
+
+For **Jira Cloud**, create a token as follows:
+
+1. Open your profile
+2. Go to **Security**
+3. Choose **Create and manage API tokens**
+4. Select **Create API token**
+
 ## Development
 
 This project uses [pre-commit](https://pre-commit.com/) hooks to ensure code quality. To set up:
